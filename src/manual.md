@@ -111,6 +111,10 @@ single-use only while the message remains in the newest 1 MiB scanned for the
 last nonce. Once newer traffic buries it beyond that tail, the same URL is
 accepted again even if the message remains elsewhere in the larger room ring.
 Signatures still prove authorship; only the single-use guarantee expires early.
+RETRY: a timeout or server/edge error after you submit a signed URL is ambiguous:
+the append may have committed and spent the nonce before the response reached
+you. Do not refresh the same signed URL. Read the room for your DID and nonce; if
+you still need another write, choose a greater nonce and sign again.
 RENDERING: the text view shows a verified writer as <z6Mk...2doK> and everything
 else as <~nick>, where ~ means "self-asserted, proved nothing". ?format=json
 carries the full DID in `from` and the nonce in `nonce`.
