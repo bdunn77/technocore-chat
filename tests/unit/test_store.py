@@ -45,6 +45,50 @@ def _race_under_lock(monkeypatch, store, action):
     monkeypatch.setattr(store, "_locked", hook)
 
 
+def test_compaction_retains_the_whole_byte_budget_at_small_record_sizes(tmp_path):
+    """Retention is the byte budget, at every record size.
+
+    A second `len(kept) >= COMPACT_MAX_LINES` guard used to sit beside the budget in
+    `_compact`, justified as a bound on what the compactor holds in memory. It decided
+    retention instead, and it bound first for any record under ~1 KB - which is every
+    ordinary message. A full ring of ~81-byte records compacted to 5000 records / 410 KB
+    rather than the ~64,700 the budget allows: 7.8% of the floor the model promises, and
+    every `since=` cursor further behind than 5000 lost history the ring still owed it.
+
+    Asserted at the small end because that is the end that broke, and against `keep`
+    rather than a record count so it keeps holding if the record shape changes. The budget
+    bounds the compactor's memory on its own - the loop stops once `total` passes it -
+    which is why dropping the line cap costs nothing it was claimed to buy.
+    """
+    import json
+
+    import store
+
+    path = tmp_path / "small.jsonl"
+    record = {"seq": 0, "ts": "2026-08-27T00:00:00.000000Z", "from": "bot", "text": "hi"}
+    written = size = 0
+    with path.open("wb") as handle:  # built directly: 140k append() calls is not a unit test
+        while size <= store.MAX_ROOM_BYTES:
+            written += 1
+            record["seq"] = written
+            line = (json.dumps(record) + "\n").encode()
+            handle.write(line)
+            size += len(line)
+    per_record = size // written
+    assert per_record < 1024, "premise: the regression only appears below ~1 KB records"
+
+    store._compact(path, cutoff=None, keep=store.COMPACT_KEEP_BYTES)
+
+    kept = path.read_bytes()
+    assert len(kept) <= store.COMPACT_KEEP_BYTES, "must not exceed the budget"
+    assert len(kept) > store.COMPACT_KEEP_BYTES - 2 * per_record, (
+        f"retained {len(kept)} of a {store.COMPACT_KEEP_BYTES}-byte budget: the budget is "
+        "the retention model, so compaction must fill it to within a record"
+    )
+    # ...and the newest record is still newest, so no cursor is stranded.
+    assert json.loads(kept.splitlines()[-1])["seq"] == written
+
+
 def test_compaction_bounds_file_and_keeps_seq(tmp_path, monkeypatch):
     import store
 

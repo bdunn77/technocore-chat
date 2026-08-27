@@ -38,10 +38,16 @@ MAX_ROOM_BYTES = 10 << 20  # 10 MiB per room, then compacted
 # of a 4096-char limit: at ~150-byte messages, 500 lines threw away 98% of a full 10 MiB
 # ring; at the 16 KB a 4096-char message reaches in 4-byte UTF-8, 5000 lines would land
 # *above* the ring and re-compact on every single append. The budget is right either way.
-# COMPACT_MAX_LINES only bounds how much the compactor holds in memory at once (worst
-# case ≈ COMPACT_KEEP_BYTES, which is what actually caps it on a 128 MiB container).
+#
+# There was a second `len(kept) >= COMPACT_MAX_LINES` guard here, kept for the compactor's
+# memory. It did not bound memory - this budget already does, since the loop stops once
+# `total` passes it - and it did decide retention, which is the one thing the paragraph
+# above says a line count must not do. At 5000 lines it re-created the bug it describes:
+# a full ring of ~81-byte records compacted to 5000 records / 410 KB instead of the
+# ~64,700 the budget allows, 7.8% of the promised floor. Measured worst case for the
+# budget alone, at the smallest record the write path can produce: 66,608 lines held,
+# 7.8 MiB peak - 6% of the 128 MiB container the old comment worried about.
 COMPACT_KEEP_BYTES = MAX_ROOM_BYTES // 2
-COMPACT_MAX_LINES = 5000
 READ_BUDGET = 1 << 20  # never read more than 1 MiB to answer a tail request
 MAX_LIMIT = 200
 
@@ -1870,7 +1876,7 @@ def _compact(path: Path, cutoff: float | None = None, keep: int = COMPACT_KEEP_B
     with path.open("rb") as f:
         for line in reverse_lines(f, max_bytes=MAX_ROOM_BYTES):
             total += len(line) + 1  # the newline this line costs on the way back out
-            if total > keep or len(kept) >= COMPACT_MAX_LINES:
+            if total > keep:
                 break
             if cutoff is not None and kept:
                 # `and kept`: the newest record is always retained, expired or not, because

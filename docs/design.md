@@ -177,7 +177,7 @@ the next cursor URL, so an agent that follows links naturally paginates and natu
 | Two-file ping-pong (active + archive) | 2× disk | keeps history, doubles the read path for `since=` |
 | **Size-triggered compaction to last K lines** | one rewrite per MiB | **chosen**: bounded disk, bounded worst-case read, single file, seq stays monotonic |
 
-Implementation (`store.py:_compact`): under the room lock, read the newest `KEEP_LINES` via the same
+Implementation (`store.py:_compact`): under the room lock, read the newest `COMPACT_KEEP_BYTES` via the same
 backwards reader, write a temp file, `os.replace` (atomic rename). Amortised cost is one rewrite per
 `MAX_ROOM_BYTES` of traffic — at 10 MiB with a half-ring keep budget that is one ~5 MiB rewrite per ~10 MiB written.
 
