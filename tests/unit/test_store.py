@@ -56,9 +56,9 @@ def test_compaction_retains_the_whole_byte_budget_at_small_record_sizes(tmp_path
     every `since=` cursor further behind than 5000 lost history the ring still owed it.
 
     Asserted at the small end because that is the end that broke, and against `keep`
-    rather than a record count so it keeps holding if the record shape changes. The budget
-    bounds the compactor's memory on its own - the loop stops once `total` passes it -
-    which is why dropping the line cap costs nothing it was claimed to buy.
+    rather than a record count so it keeps holding if the record shape changes. Retained
+    lines are coalesced into bounded blocks, so object overhead stays bounded without a
+    line count deciding how much history survives.
     """
     import json
 
@@ -87,6 +87,51 @@ def test_compaction_retains_the_whole_byte_budget_at_small_record_sizes(tmp_path
     )
     # ...and the newest record is still newest, so no cursor is stranded.
     assert json.loads(kept.splitlines()[-1])["seq"] == written
+
+
+def test_compaction_bounds_object_overhead_for_tiny_malformed_lines(tmp_path):
+    """A byte budget must also remain a practical memory budget for hostile disk contents.
+
+    Stored records are normally large enough that their payload dominates Python object
+    overhead, but the compactor also has to tolerate a restored or hand-edited file. One
+    separate `bytes` object per one-byte line amplified a 1 MiB keep budget to about 70 MiB.
+    Coalescing lines must preserve the byte-only retention rule without that amplification.
+    """
+    import tracemalloc
+
+    import store
+
+    keep = 1 << 20
+    path = tmp_path / "tiny-malformed.jsonl"
+    path.write_bytes(b"x\n" * keep)  # 2 MiB: enough newest lines to fill the keep budget
+
+    tracemalloc.start()
+    try:
+        store._compact(path, cutoff=None, keep=keep)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert path.stat().st_size == keep, "tiny malformed lines must not revive a line cap"
+    assert peak < 12 * keep, f"{peak} bytes peak for a {keep}-byte retention budget"
+
+
+def test_compaction_keeps_newest_record_when_it_exceeds_the_budget(tmp_path):
+    """The newest sequence is the cursor anchor even when one record exceeds `keep`."""
+    import json
+
+    import store
+
+    path = tmp_path / "oversized-newest.jsonl"
+    older = b'{"seq":1,"ts":"2026-08-27T00:00:00Z","from":"bot","text":"old"}\n'
+    newest = json.dumps(
+        {"seq": 2, "ts": "2026-08-27T00:00:01Z", "from": "bot", "text": "x" * 256}
+    ).encode()
+    path.write_bytes(older + newest + b"\n")
+
+    store._compact(path, cutoff=None, keep=64)
+
+    assert path.read_bytes() == newest + b"\n"
 
 
 def test_compaction_bounds_file_and_keeps_seq(tmp_path, monkeypatch):

@@ -39,14 +39,10 @@ MAX_ROOM_BYTES = 10 << 20  # 10 MiB per room, then compacted
 # ring; at the 16 KB a 4096-char message reaches in 4-byte UTF-8, 5000 lines would land
 # *above* the ring and re-compact on every single append. The budget is right either way.
 #
-# There was a second `len(kept) >= COMPACT_MAX_LINES` guard here, kept for the compactor's
-# memory. It did not bound memory - this budget already does, since the loop stops once
-# `total` passes it - and it did decide retention, which is the one thing the paragraph
-# above says a line count must not do. At 5000 lines it re-created the bug it describes:
-# a full ring of ~81-byte records compacted to 5000 records / 410 KB instead of the
-# ~64,700 the budget allows, 7.8% of the promised floor. Measured worst case for the
-# budget alone, at the smallest record the write path can produce: 66,608 lines held,
-# 7.8 MiB peak - 6% of the 128 MiB container the old comment worried about.
+# A line count must not decide retention, but one Python bytes object per line lets a
+# hand-edited file of tiny records spend far more memory than this byte budget. Coalesce
+# reverse-read lines into bounded blocks: the batch size controls object overhead only,
+# while `total` remains the sole retention rule.
 COMPACT_KEEP_BYTES = MAX_ROOM_BYTES // 2
 READ_BUDGET = 1 << 20  # never read more than 1 MiB to answer a tail request
 MAX_LIMIT = 200
@@ -1871,28 +1867,25 @@ def _compact(path: Path, cutoff: float | None = None, keep: int = COMPACT_KEEP_B
     History loss is visible to clients: the tail response reports `first_seq`, so a
     reader that asked for `since=N` and gets `first_seq > N+1` knows it missed lines.
     """
-    kept: list[bytes] = []
-    total = 0
+    kept, batch, total = [], [], 0
     with path.open("rb") as f:
         for line in reverse_lines(f, max_bytes=MAX_ROOM_BYTES):
             total += len(line) + 1  # the newline this line costs on the way back out
-            if total > keep:
+            if (kept or batch) and total > keep:
                 break
-            if cutoff is not None and kept:
-                # `and kept`: the newest record is always retained, expired or not, because
-                # `seq` is read back from it. Compacting an `e-` room to nothing would
-                # restart the sequence at 1 and silently strand every cursor pointing past
-                # it. Unreadable on the way out, one line on disk — the cheap side of that
-                # trade. Append-ordered, so everything further back is older still.
+            if cutoff is not None and (kept or batch):
+                # Once the newest record is retained, expiry may stop the scan. The anchor
+                # keeps `seq` monotonic even when every visible record has expired.
                 rec = _parse(line)
                 if rec is None or _expired(rec, cutoff):
                     break
-            kept.append(line)
-    kept.reverse()
-    # Not b"\n".join(...): an `e-` room whose every record expired compacts to nothing, and
-    # join would leave a stray newline behind instead of an empty file.
-    _replace(path, b"".join(line + b"\n" for line in kept), fsync=True)
-    config._dbg(2, "compact", room=path.name, kept=len(kept), bytes=total)
+            batch.append(line)
+            if len(batch) >= 1024:
+                kept.append(b"".join(line + b"\n" for line in reversed(batch)))
+                batch.clear()
+    data = b"".join(line + b"\n" for line in reversed(batch)) + b"".join(reversed(kept))
+    _replace(path, data, fsync=True)
+    config._dbg(2, "compact", room=path.name, kept=data.count(b"\n"), bytes=total)
 
 
 def note_set(
