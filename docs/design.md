@@ -175,11 +175,13 @@ the next cursor URL, so an agent that follows links naturally paginates and natu
 | Time-based expiry | full scan per pass | scan cost is unbounded; wall-clock retention was never the requirement |
 | Fixed-width records + true ring | O(1) seek | forces padding and a max message size into the on-disk format; unreadable by `grep` |
 | Two-file ping-pong (active + archive) | 2× disk | keeps history, doubles the read path for `since=` |
-| **Size-triggered compaction to last K lines** | one rewrite per MiB | **chosen**: bounded disk, bounded worst-case read, single file, seq stays monotonic |
+| **Size-triggered compaction to a byte budget** | one rewrite per MiB | **chosen**: bounded disk, bounded worst-case read, single file, seq stays monotonic |
 
 Implementation (`store.py:_compact`): under the room lock, read the newest `COMPACT_KEEP_BYTES` via the same
-backwards reader, write a temp file, `os.replace` (atomic rename). Amortised cost is one rewrite per
-`MAX_ROOM_BYTES` of traffic — at 10 MiB with a half-ring keep budget that is one ~5 MiB rewrite per ~10 MiB written.
+backwards reader, coalesce retained lines into bounded blocks, write a temp file, and `os.replace` it (atomic
+rename). The byte total alone decides retention; blocking bounds Python object overhead without reintroducing a
+line-count retention cap. Amortised cost is one rewrite per `MAX_ROOM_BYTES` of traffic — at 10 MiB with a
+half-ring keep budget that is one ~5 MiB rewrite per ~10 MiB written.
 
 **Truncation is never silent.** Every response reports `first_seq`; a reader that asked for
 `since=N` and receives `first_seq > N+1` knows it missed lines. (Repo rule "no silent fallbacks"
