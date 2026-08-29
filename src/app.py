@@ -26,7 +26,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import PlainTextResponse, Response, StreamingResponse
 from starlette.routing import Match, Route
 
 import config
@@ -931,6 +931,43 @@ async def _await_messages(
     return None
 
 
+def room_export(request: Request) -> Response:
+    """`GET /r/<room>/export` — the retained ring, one raw JSONL download.
+
+    Every other read is a tail window (newest <= MAX_LIMIT), so nothing could copy the
+    history a room still holds even though it is literally a file (docs/design.md
+    §5.1–§5.2: a signed record re-verifies offline from the stored bytes, which is what
+    makes a dump a bundle of portable proofs). The body is the stored bytes exactly as
+    written — see store.export_room for why re-serializing is refused and how the
+    snapshot is bounded.
+
+    Metadata rides in one header rather than a body prelude, so `curl ... > room.jsonl`
+    yields a file that is nothing but records. Reachability is the room read's: whoever
+    holds the name reads it, `p-` rooms included, and a missing room answers exactly as
+    the room read does (200, empty). The read budget applies unchanged — the response is
+    already bounded by the room byte cap, so a separate budget class would price the same
+    worst case twice. No `wait=` and no query params in v1.
+    """
+    _, retry = take(request, "read", RATE_READ)
+    if retry:
+        return limit.limited("read", RATE_READ, retry, text=text, max_wait=MAX_WAIT)
+    room = request.path_params["room"]
+    # One call carries both halves: the store reads the generation right after the open,
+    # so header and body are captured back to back — up to the residual race
+    # store.export_room's docstring accepts, never a request lifetime apart.
+    generation, chunks = store.export_room(config.ROOT, room)
+    return StreamingResponse(
+        chunks,
+        media_type="application/x-ndjson; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Robots-Tag": "noindex",
+            "X-Room-Generation": str(generation),
+        },
+    )
+
+
 def _reject_if_events_room(room: str) -> Response | None:
     """The events room is server-written only.
 
@@ -1166,7 +1203,7 @@ def room_say_signed(request: Request) -> Response:
     with _dupe_slot(room, body) as refused:
         if refused:
             return _dupe_refusal(request, room)
-        rec = store.append(config.ROOT, room, "", body, did=signer, nonce=int(nonce))
+        rec = store.append(config.ROOT, room, "", body, did=signer, nonce=int(nonce), sig=p["sig"])
     config._dbg(3, "write", room=room, seq=rec["seq"], chars=len(rec["text"]))
     limit._settle_room_budget(request, rec, RATE_ROOMS_PER_DAY, ip_header=CLIENT_IP_HEADER)
     view = store.read_messages(config.ROOT, room, limit=20)
@@ -1270,7 +1307,9 @@ async def room_post(request: Request) -> Response:
             with _dupe_slot(room, body) as refused:
                 if refused:
                     return _dupe_refusal(request, room)
-                posted = store.append(config.ROOT, room, "", body, did=signer, nonce=int(nonce))
+                posted = store.append(
+                    config.ROOT, room, "", body, did=signer, nonce=int(nonce), sig=sig
+                )
         config._dbg(3, "write", room=room, seq=posted["seq"], chars=len(posted["text"]))
         limit._settle_room_budget(request, posted, RATE_ROOMS_PER_DAY, ip_header=CLIENT_IP_HEADER)
         return respond(
@@ -1871,6 +1910,7 @@ app = Starlette(
         Route("/rooms", rooms),
         Route("/r/{room}", room_read),
         Route("/r/{room}", room_post, methods=["POST"]),
+        Route("/r/{room}/export", room_export),
         _get_write("/r/{room}/say/{nick}/{text:path}", room_say),
         _get_write("/r/{room}/say-signed/{did}/{sig}/{nonce}/{text:path}", room_say_signed),
         Route("/kv/{ns}", note_list),
