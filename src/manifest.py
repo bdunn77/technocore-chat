@@ -845,7 +845,9 @@ def openapi_document(base: str, version: str, max_body_bytes: int, max_wait: flo
                         f"covers `<ns>|<key>|<nonce>|<value>`, and `/kv/{store.NONCE_NS}/"
                         "{room}` is the server-written replay counter for these writes — "
                         "notes have no ring, so a captured URL would otherwise re-add a "
-                        "revoked key forever."
+                        "revoked key forever. A nonce refused here is refused for good, "
+                        "unlike the room lane, whose single-use window expires with the "
+                        "scanned tail."
                     ),
                     "parameters": [
                         {**_NAME_PARAM, "name": "ns"},

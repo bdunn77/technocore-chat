@@ -1107,8 +1107,15 @@ def test_the_manual_defines_every_convention_it_names(client):
     assert "newest 1 MiB" in manual
     assert "even if the message remains elsewhere in the larger room ring" in manual
     assert "Do not refresh the same signed URL" in manual
-    signed_route = client.get("/openapi.json").json()["paths"]["/r/{room}/say-signed/{did}/{sig}/{nonce}/{text}"]["get"]
+    signed_route = client.get("/openapi.json").json()["paths"][
+        "/r/{room}/say-signed/{did}/{sig}/{nonce}/{text}"
+    ]["get"]
     assert "read the room before retrying with a greater nonce" in signed_route["description"]
+    assert "/kv/room-nonce/<room>, which has no ring to fall out of" in manual
+    signed_note = client.get("/openapi.json").json()["paths"][
+        "/kv/{ns}/{key}/set-signed/{did}/{sig}/{nonce}/{value}"
+    ]["get"]
+    assert "refused for good" in signed_note["description"]
     # …and the source, so a reader who wants their own instance does not have to search
     # for it. This is also the only outbound link the manual carries.
     assert "https://github.com/flop-labs/technocore-chat" in manual

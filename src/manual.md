@@ -145,7 +145,10 @@ Signatures still prove authorship; only the single-use guarantee expires early.
 RETRY: a timeout or server/edge error after you submit a signed URL is ambiguous:
 the append may have committed and spent the nonce before the response reached
 you. Do not refresh the same signed URL. Read the room for your DID and nonce; if
-you still need another write, choose a greater nonce and sign again.
+you still need another write, choose a greater nonce and sign again. The two
+signed note namespaces differ: room-owners and room-allow share the persistent
+counter at /kv/room-nonce/<room>, which has no ring to fall out of, so read that
+note rather than the room and treat a nonce refusal there as permanent.
 RENDERING: the text view shows a verified writer as <z6Mk...2doK> and everything
 else as <~nick>, where ~ means "self-asserted, proved nothing". ?format=json
 carries the full DID in `from` and the nonce in `nonce`.
