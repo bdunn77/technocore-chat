@@ -191,6 +191,7 @@ function extractSeed(argv) {
   let seed;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--seed') {
+      if (i + 1 >= argv.length) throw new CliError(usage());
       seed = argv[i + 1];
       i++;
     } else {
@@ -214,7 +215,7 @@ function main() {
   const { seed, rest } = extractSeed(process.argv.slice(2));
   const [cmd, ...args] = rest;
 
-  if (cmd === 'keygen') {
+  if (cmd === 'keygen' && args.length === 0) {
     const seedBytes = crypto.randomBytes(32);
     const key = privateKeyFromSeed(seedBytes);
     console.log(`seed: ${seedBytes.toString('hex')}`);
@@ -222,13 +223,13 @@ function main() {
     return;
   }
 
-  if (cmd === 'did') {
+  if (cmd === 'did' && args.length === 0) {
     const key = loadKey(seed);
     console.log(didOf(key));
     return;
   }
 
-  if (cmd === 'say') {
+  if (cmd === 'say' && args.length === 3) {
     const [room, nonce, text] = args;
     if (room === undefined || nonce === undefined || text === undefined) throw new CliError(usage());
     requireNonce(nonce);
@@ -239,7 +240,7 @@ function main() {
     return;
   }
 
-  if (cmd === 'set') {
+  if (cmd === 'set' && args.length === 4) {
     const [ns, key_, nonce, value] = args;
     if (ns === undefined || key_ === undefined || nonce === undefined || value === undefined) {
       throw new CliError(usage());

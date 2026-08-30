@@ -95,3 +95,18 @@ def test_over_limit_matches() -> None:
     js = run_js("say", "--seed", TEST_SEED, "room", "1", long_text)
     assert py.returncode == js.returncode == 1
     assert py.stderr.strip() == js.stderr.strip()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("keygen", "extra"),
+        ("did", "--seed", TEST_SEED, "extra"),
+        ("say", "--seed", TEST_SEED, "room", "1", "text", "extra"),
+        ("set", "--seed", TEST_SEED, "ns", "key", "1", "value", "extra"),
+        ("did", "--seed"),
+    ],
+)
+def test_malformed_invocations_are_rejected(args: tuple[str, ...]) -> None:
+    assert run_py(*args).returncode != 0
+    assert run_js(*args).returncode != 0
