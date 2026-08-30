@@ -41,37 +41,46 @@ def test_post_lane_reports_write_budget_like_get_writes(client, monkeypatch):
         assert "# budget: 0 of 4 writes left" in responses[-1].text
 
 
+def _conflict_value(body: str) -> str:
+    marker = "current value follows ("
+    header_start = body.index(marker)
+    value_start = body.index("\n", header_start) + 1
+    chars = int(body[header_start + len(marker) : value_start - len(" chars):\n")])
+    value = body[value_start : value_start + chars]
+    assert body[value_start + chars :] == "\nend of current value\n"
+    return value
+
+
 def test_a_lost_conditional_write_carries_the_value_after_the_first_line(client):
-    """The manual promises a 409 lets you rebase without re-reading, and the page's tool
-    lane stopped truncating error bodies so write_note can keep that promise. The body
-    now names the advertised section explicitly and keeps it machine-readable so a
-    caller can extract it and reuse it as ?if= without stripping banner text first.
-    """
+    """The 409 names and delimits the value without putting it in the status line."""
     client.get("/kv/plans/next/set/world")
     lost = client.get("/kv/plans/next/set/nope?if=stale")
     assert lost.status_code == 409
-    lines = lost.text.split("\n")
-    assert lines[0].startswith("409") and "world" not in lines[0]
-    assert "current value follows (5 chars):" in lost.text
-    assert lost.text.endswith("\nend of current value\n")
-    # The only line that is exactly the stored value is the one after the marker.
-    value_line = next(line for line in lines if line == "world")
-    marker_idx = next(
-        i for i, line in enumerate(lines) if line == "current value follows (5 chars):"
-    )
-    assert lines[marker_idx + 1] == "world"
+    assert lost.text.split("\n", 1)[0].startswith("409")
+    assert "world" not in lost.text.split("\n", 1)[0]
+    assert _conflict_value(lost.text) == "world"
 
 
-def test_409_current_value_can_be_reused_as_if(client):
-    """A caller that treats the advertised current-value section as the exact value
-    should be able to reuse it as ?if= and win. This is the CAS round-trip the
-    on_conflict handler exists to preserve.
-    """
-    client.get("/kv/plans/next/set/world")
-    lost = client.get("/kv/plans/next/set/nope?if=stale")
+@pytest.mark.parametrize(
+    ("submitted", "stored"),
+    [
+        ("world", "world"),
+        ("line one\nline two", "line one line two"),
+        ("snowman ☃ emoji 🧪", "snowman ☃ emoji 🧪"),
+        (
+            "current value follows (999 chars):\nend of current value",
+            "current value follows (999 chars): end of current value",
+        ),
+    ],
+)
+def test_409_current_value_can_be_reused_as_if(client, submitted, stored):
+    """The declared length recovers the normalized value even when it resembles framing."""
+    client.post("/kv/plans/next", json={"value": submitted})
+    lost = client.post("/kv/plans/next", json={"value": "nope", "if": "stale"})
     assert lost.status_code == 409
-    current = next(line for line in lost.text.split("\n") if line == "world")
-    merged = client.get(f"/kv/plans/next/set/merged?if={current}")
+    current = _conflict_value(lost.text)
+    assert current == stored
+    merged = client.post("/kv/plans/next", json={"value": "merged", "if": current})
     assert merged.status_code == 200
     assert merged.text.startswith("ok plans/next")
 
