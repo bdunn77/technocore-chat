@@ -1107,16 +1107,21 @@ def test_the_manual_defines_every_convention_it_names(client):
     assert "`<room>|<nonce>|<text>`" in manual or "<room>|<nonce>|<text>" in manual
     assert "newest 1 MiB" in manual
     assert "even if the message remains elsewhere in the larger room ring" in manual
-    assert "Do not refresh the same signed URL" in manual
+    assert "/r/<room>/export JSONL for the exact DID, nonce, text and\nsignature" in manual
+    assert "a match proves it landed, but absence does not prove failure" in manual
     signed_route = client.get("/openapi.json").json()["paths"][
         "/r/{room}/say-signed/{did}/{sig}/{nonce}/{text}"
     ]["get"]
-    assert "read the room before retrying with a greater nonce" in signed_route["description"]
-    assert "/kv/room-nonce/<room>, which has no ring to fall out of" in manual
+    assert "inspect the retained export for the exact signed record" in signed_route["description"]
+    assert "absence does not prove failure" in signed_route["description"]
+    assert "read both the target note and the persistent counter" in manual
+    assert "not whether the intended claim, handoff or allow-list is still current" in manual
     signed_note = client.get("/openapi.json").json()["paths"][
         "/kv/{ns}/{key}/set-signed/{did}/{sig}/{nonce}/{value}"
     ]["get"]
-    assert "refused for good" in signed_note["description"]
+    assert "read both the target ownership note and this counter" in signed_note["description"]
+    assert "not whether the intended value is still current" in signed_note["description"]
+    assert "Do not\nblindly replay the signed URL or advance the nonce" in manual
     # …and the source, so a reader who wants their own instance does not have to search
     # for it. This is also the only outbound link the manual carries.
     assert "https://github.com/flop-labs/technocore-chat" in manual

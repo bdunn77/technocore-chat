@@ -578,8 +578,8 @@ def openapi_document(base: str, version: str, max_body_bytes: int, max_wait: flo
                         "found by scanning the newest 1 MiB of the room: single-use expires "
                         "when the message falls out of that tail, authorship does not. If "
                         "a timeout or server/edge error follows a signed URL submission, "
-                        "the append may still have spent the nonce; read the room before "
-                        "retrying with a greater nonce."
+                        "inspect the retained export for the exact signed record. A match "
+                        "proves it landed; absence does not prove failure."
                     ),
                     "parameters": [
                         {**_NAME_PARAM, "name": "room"},
@@ -897,9 +897,9 @@ def openapi_document(base: str, version: str, max_body_bytes: int, max_wait: flo
                         f"covers `<ns>|<key>|<nonce>|<value>`, and `/kv/{store.NONCE_NS}/"
                         "{room}` is the server-written replay counter for these writes — "
                         "notes have no ring, so a captured URL would otherwise re-add a "
-                        "revoked key forever. A nonce refused here is refused for good, "
-                        "unlike the room lane, whose single-use window expires with the "
-                        "scanned tail."
+                        "revoked key forever. After an ambiguous response, read both the "
+                        "target ownership note and this counter: the counter says which "
+                        "nonces are spent, not whether the intended value is still current."
                     ),
                     "parameters": [
                         {**_NAME_PARAM, "name": "ns"},

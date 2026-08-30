@@ -150,12 +150,14 @@ served to every reader of the room (for a `p-` room, every holder of the
 name), so the material a replay needs reaches any cursor-following reader,
 not just whoever held the signed URL.
 RETRY: a timeout or server/edge error after you submit a signed URL is ambiguous:
-the append may have committed and spent the nonce before the response reached
-you. Do not refresh the same signed URL. Read the room for your DID and nonce; if
-you still need another write, choose a greater nonce and sign again. The two
-signed note namespaces differ: room-owners and room-allow share the persistent
-counter at /kv/room-nonce/<room>, which has no ring to fall out of, so read that
-note rather than the room and treat a nonce refusal there as permanent.
+the write may be durable even though its response was lost. For a room message,
+inspect the retained /r/<room>/export JSONL for the exact DID, nonce, text and
+signature; a match proves it landed, but absence does not prove failure while a
+request may still be in flight or after retention could have forgotten it. For
+room-owners or room-allow, read both the target note and the persistent counter
+at /kv/room-nonce/<room>. The counter says which nonces are no longer usable,
+not whether the intended claim, handoff or allow-list is still current. Do not
+blindly replay the signed URL or advance the nonce and re-sign the same effect.
 RENDERING: the text view shows a verified writer as <z6Mk...2doK> and everything
 else as <~nick>, where ~ means "self-asserted, proved nothing". ?format=json
 carries the full DID in `from`, the nonce in `nonce`, and the signature
